@@ -20,14 +20,20 @@ jobs:
       - name: Install dependencies
         run: npm install || true
 
-      - name: Build web (si existe)
+      - name: Build web
         run: npm run build || echo "no build"
 
       - name: Install Capacitor
         run: npm install @capacitor/cli @capacitor/core
 
-      - name: Sync Capacitor
-        run: npx cap sync || true
+      - name: Init Capacitor
+        run: npx cap init app com.app.test --web-dir=www || true
+
+      - name: Add Android
+        run: npx cap add android
+
+      - name: Copy files
+        run: npx cap copy
 
       - name: Setup Java
         uses: actions/setup-java@v4
@@ -37,7 +43,7 @@ jobs:
 
       - name: Build APK
         run: |
-          cd android || exit 1
+          cd android
           chmod +x gradlew
           ./gradlew assembleDebug
 
