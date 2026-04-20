@@ -9,46 +9,35 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: 18
 
-      - name: Install dependencies
-        run: npm install || true
+      - run: npm install || true
 
-      - name: Build web
-        run: npm run build || echo "no build"
+      - run: npm run build || echo "no build"
 
-      - name: Install Capacitor
-        run: npm install @capacitor/cli @capacitor/core
+      - run: npm install @capacitor/cli @capacitor/core @capacitor/android
 
-      - name: Init Capacitor
-        run: npx cap init app com.app.test --web-dir=www || true
+      - run: npx cap init app com.app.test --web-dir=www || true
 
-      - name: Add Android
-        run: npx cap add android
+      - run: npx cap add android
 
-      - name: Copy files
-        run: npx cap copy
+      - run: npx cap copy
 
-      - name: Setup Java
-        uses: actions/setup-java@v4
+      - uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Build APK
-        run: |
+      - run: |
           cd android
           chmod +x gradlew
           ./gradlew assembleDebug
 
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: app-debug
           path: android/app/build/outputs/apk/debug/app-debug.apk
