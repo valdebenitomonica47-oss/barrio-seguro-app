@@ -1,0 +1,950 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#0f0f1a">
+<title>BarrioSeguro</title>
+
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+  import { getFirestore, doc, setDoc, getDoc, collection, addDoc, onSnapshot, query, orderBy, serverTimestamp, updateDoc, deleteDoc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+  import { getMessaging, getToken, onMessage } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-messaging.js";
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyDbPcOeUQtRa0RBNwMlPsOXVHIEKMiajYU",
+    authDomain: "barrio-seguro-app-93edd.firebaseapp.com",
+    projectId: "barrio-seguro-app-93edd",
+    storageBucket: "barrio-seguro-app-93edd.firebasestorage.app",
+    messagingSenderId: "76472451854",
+    appId: "1:76472451854:web:7595602fcd6ca40fb8cd5f"
+  };
+
+  const app = initializeApp(firebaseConfig);
+  const db = getFirestore(app);
+
+  window._db = db;
+
+  // FCM - Notificaciones en segundo plano
+  try {
+    const messaging = getMessaging(app);
+    window._messaging = messaging;
+
+    // Escuchar mensajes cuando la app está abierta
+    onMessage(messaging, (payload) => {
+      const a = {
+        tipoEmergencia: payload.notification?.title || 'Alerta',
+        descripcion: payload.notification?.body || '',
+        autorNombre: 'Vecino',
+        estado: 'activa'
+      };
+      mostrarPopupAlerta(a);
+    });
+
+    // Registrar Service Worker y pedir permiso
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/firebase-messaging-sw.js')
+        .then(reg => {
+          return Notification.requestPermission().then(permission => {
+            if (permission === 'granted') {
+              return getToken(messaging, {
+                vapidKey: 'BIZ51_5eLb7LHQ6ZCT8jxNFa9GoYPDW4WUFoZVOBlRN4ylQYwIyfCb4Hz4Filaz4-JmqJQNKB1sOCW3VZue5iAs',
+                serviceWorkerRegistration: reg
+              });
+            }
+          });
+        })
+        .then(token => {
+          if (token) {
+            window._fcmToken = token;
+            console.log('FCM Token:', token);
+          }
+        })
+        .catch(e => console.log('FCM setup:', e));
+    }
+  } catch(e) { console.log('Messaging no disponible:', e); }
+
+  window._firebase = {
+    doc, setDoc, getDoc, collection, addDoc,
+    onSnapshot, query, orderBy, serverTimestamp, updateDoc, deleteDoc
+  };
+
+  // Restaurar sesión desde localStorage
+  var savedUser = localStorage.getItem('bs_user');
+  if (savedUser) {
+    try {
+      window._currentUser = JSON.parse(savedUser);
+      window._currentVillaId = window._currentUser.villaId;
+      go('pg-app');
+      cargarApp();
+    } catch(e) { localStorage.removeItem('bs_user'); }
+  }
+</script>
+
+<style>
+*{box-sizing:border-box;margin:0;padding:0;}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0f0f1a;display:flex;justify-content:center;min-height:100vh;}
+.app{max-width:420px;width:100%;margin:0 auto;background:#0f0f1a;min-height:100vh;display:flex;flex-direction:column;}
+.page{display:none;flex-direction:column;flex:1;}
+.page.active{display:flex;}
+
+/* PORTADA */
+.cover{flex:1;background:#0f0f1a;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:40px 28px;gap:32px;}
+.cover-logo{width:90px;height:90px;border-radius:50%;background:rgba(220,38,38,0.15);border:2px solid rgba(220,38,38,0.4);display:flex;align-items:center;justify-content:center;font-size:38px;}
+.cover-title{color:#fff;font-size:30px;font-weight:700;text-align:center;}
+.cover-sub{color:rgba(255,255,255,0.45);font-size:13px;text-align:center;margin-top:6px;}
+.cover-btns{display:flex;flex-direction:column;gap:14px;width:100%;}
+.btn-red{width:100%;padding:16px;background:#dc2626;color:#fff;border:none;border-radius:14px;font-size:15px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:10px;}
+.btn-red:hover{background:#b91c1c;}
+.btn-dark{width:100%;padding:16px;background:#1e1e2e;color:#fff;border:1px solid rgba(255,255,255,0.15);border-radius:14px;font-size:15px;font-weight:600;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:10px;}
+.btn-dark:hover{background:#2a2a3e;}
+.cover-footer{color:rgba(255,255,255,0.25);font-size:11px;text-align:center;}
+
+/* INNER PAGES */
+.inner{flex:1;background:#0f0f1a;display:flex;flex-direction:column;}
+.inner-header{background:#1a1a2e;padding:16px 20px;display:flex;align-items:center;gap:12px;border-bottom:1px solid rgba(255,255,255,0.08);}
+.back-btn{background:none;border:none;color:rgba(255,255,255,0.5);font-size:22px;cursor:pointer;line-height:1;}
+.back-btn:hover{color:#fff;}
+.inner-title{color:#fff;font-size:16px;font-weight:600;}
+.inner-body{padding:24px 20px;display:flex;flex-direction:column;gap:14px;overflow-y:auto;}
+.field-group{display:flex;flex-direction:column;}
+.field-label{font-size:12px;color:rgba(255,255,255,0.5);margin-bottom:5px;}
+.field-input{width:100%;padding:11px 14px;border:1px solid rgba(255,255,255,0.12);border-radius:10px;font-size:14px;outline:none;font-family:inherit;color:#fff;background:#1e1e2e;}
+.field-input:focus{border-color:#dc2626;}
+.field-input::placeholder{color:rgba(255,255,255,0.25);}
+.field-hint{font-size:11px;color:rgba(255,255,255,0.3);margin-top:4px;}
+.divider{height:1px;background:rgba(255,255,255,0.07);}
+.sec-title{font-size:12px;font-weight:600;color:rgba(255,255,255,0.4);text-transform:uppercase;letter-spacing:0.06em;padding-bottom:6px;border-bottom:1px solid rgba(255,255,255,0.07);}
+.submit-btn{width:100%;padding:14px;background:#dc2626;color:#fff;border:none;border-radius:12px;font-size:15px;font-weight:700;cursor:pointer;transition:opacity 0.15s;}
+.submit-btn:hover{opacity:0.88;}
+.submit-btn:disabled{opacity:0.4;cursor:not-allowed;}
+.error-msg{background:rgba(220,38,38,0.15);border:1px solid rgba(220,38,38,0.4);border-radius:8px;padding:10px 13px;font-size:13px;color:#fca5a5;display:none;}
+.success-box{background:rgba(34,197,94,0.1);border:1px solid rgba(34,197,94,0.3);border-radius:12px;padding:16px;display:none;flex-direction:column;gap:10px;}
+.success-title{font-size:14px;font-weight:600;color:#86efac;}
+.code-row{display:flex;align-items:center;justify-content:space-between;background:#1e1e2e;border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:10px 13px;}
+.code-label{font-size:12px;color:rgba(255,255,255,0.4);}
+.code-value{font-size:15px;font-weight:700;color:#fff;letter-spacing:1px;}
+.admin-gate-box{background:rgba(234,179,8,0.1);border:1px solid rgba(234,179,8,0.3);border-radius:8px;padding:12px;font-size:13px;color:#fde68a;display:flex;align-items:center;gap:8px;}
+.spinner{display:inline-block;width:18px;height:18px;border:2px solid rgba(255,255,255,0.2);border-top-color:#dc2626;border-radius:50%;animation:spin 0.7s linear infinite;vertical-align:middle;margin-right:6px;}
+@keyframes spin{to{transform:rotate(360deg);}}
+
+/* APP PRINCIPAL */
+.main-app{flex:1;display:flex;flex-direction:column;background:#0f0f1a;}
+.app-header{background:#1a1a2e;padding:14px 20px 12px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid rgba(255,255,255,0.07);}
+.app-header-left .villa-name{color:#fff;font-size:16px;font-weight:700;}
+.app-header-left .villa-sub{color:rgba(255,255,255,0.4);font-size:11px;margin-top:2px;}
+.status-dot{width:7px;height:7px;border-radius:50%;background:#22c55e;display:inline-block;margin-right:5px;}
+.logout-btn{background:rgba(255,255,255,0.08);border:none;color:rgba(255,255,255,0.5);font-size:11px;padding:5px 10px;border-radius:8px;cursor:pointer;}
+
+.bottom-nav{display:flex;background:#1a1a2e;border-top:1px solid rgba(255,255,255,0.07);padding:6px 0 10px;}
+.bnav-btn{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;padding:6px 4px;border:none;background:none;cursor:pointer;color:rgba(255,255,255,0.35);font-size:10px;transition:color 0.15s;}
+.bnav-btn.active{color:#dc2626;}
+.bnav-icon{font-size:20px;}
+.bnav-btn.active .panico-icon{background:#dc2626;border-radius:50%;padding:6px;color:#fff;}
+
+.tab-content{flex:1;display:none;flex-direction:column;overflow-y:auto;}
+.tab-content.active{display:flex;}
+
+/* ── PÁNICO ── */
+.panico-tab{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;padding:28px 20px;gap:20px;}
+.panico-title{color:#fff;font-size:18px;font-weight:700;text-align:center;}
+.panico-sub{color:rgba(255,255,255,0.4);font-size:13px;text-align:center;}
+.emergency-types{display:grid;grid-template-columns:1fr 1fr;gap:12px;width:100%;}
+.etype-btn{background:#1e1e2e;border:2px solid rgba(255,255,255,0.1);border-radius:14px;padding:16px 10px;display:flex;flex-direction:column;align-items:center;gap:8px;cursor:pointer;transition:all 0.15s;}
+.etype-btn:hover{border-color:rgba(220,38,38,0.5);background:#2a1a1a;}
+.etype-btn.selected{border-color:#dc2626;background:rgba(220,38,38,0.15);}
+.etype-icon{font-size:28px;}
+.etype-label{font-size:12px;font-weight:600;color:#fff;text-align:center;}
+.sos-ring-outer{width:160px;height:160px;border-radius:50%;border:3px solid #dc2626;display:flex;align-items:center;justify-content:center;animation:pulse-ring 2s infinite;}
+@keyframes pulse-ring{0%,100%{box-shadow:0 0 0 0 rgba(220,38,38,0.3);}50%{box-shadow:0 0 0 22px rgba(220,38,38,0);}}
+.sos-main-btn{width:130px;height:130px;border-radius:50%;background:#dc2626;border:none;color:#fff;font-size:20px;font-weight:700;cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;}
+.sos-main-btn:hover{background:#b91c1c;}
+.sos-selected-label{font-size:12px;color:rgba(255,255,255,0.6);text-align:center;background:#1e1e2e;border-radius:10px;padding:8px 16px;width:100%;}
+.emergency-contacts{display:flex;gap:10px;width:100%;}
+.ec-card{flex:1;background:#1e1e2e;border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:10px;text-align:center;}
+.ec-icon{font-size:20px;margin-bottom:3px;}
+.ec-name{font-size:11px;color:rgba(255,255,255,0.45);}
+.ec-num{font-size:13px;font-weight:700;color:#fff;}
+
+/* ── ALERTAS ── */
+.alertas-tab{flex:1;display:flex;flex-direction:column;}
+.alertas-header{padding:20px 16px 10px;}
+.alertas-h1{color:#fff;font-size:22px;font-weight:700;}
+.alertas-sub{color:rgba(255,255,255,0.4);font-size:13px;margin-top:2px;}
+.filter-row{display:flex;gap:8px;padding:0 16px 12px;}
+.filter-btn{padding:7px 16px;border-radius:20px;border:1px solid rgba(255,255,255,0.15);background:transparent;color:rgba(255,255,255,0.5);font-size:13px;cursor:pointer;transition:all 0.15s;}
+.filter-btn.active{background:#dc2626;border-color:#dc2626;color:#fff;font-weight:600;}
+.alertas-list{flex:1;overflow-y:auto;padding:0 16px 16px;display:flex;flex-direction:column;gap:12px;}
+.alerta-card{background:#1e1e2e;border-radius:14px;padding:14px;border:1px solid rgba(255,255,255,0.07);}
+.alerta-card-top{display:flex;align-items:center;gap:10px;margin-bottom:10px;}
+.alerta-avatar{width:42px;height:42px;border-radius:12px;background:#2a1a1a;display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0;}
+.alerta-user{font-size:14px;font-weight:700;color:#fff;}
+.alerta-meta{font-size:11px;color:rgba(255,255,255,0.35);margin-top:1px;}
+.alerta-type-badge{margin-left:auto;padding:3px 9px;border-radius:8px;font-size:11px;font-weight:700;}
+.badge-activa{background:rgba(220,38,38,0.2);color:#fca5a5;border:1px solid rgba(220,38,38,0.3);}
+.badge-resuelta{background:rgba(34,197,94,0.15);color:#86efac;border:1px solid rgba(34,197,94,0.25);}
+.badge-falsa{background:rgba(234,179,8,0.15);color:#fde68a;border:1px solid rgba(234,179,8,0.25);}
+.alerta-desc{font-size:13px;color:rgba(255,255,255,0.75);margin-bottom:8px;line-height:1.5;}
+.alerta-gps{display:flex;align-items:center;gap:6px;font-size:12px;color:rgba(255,255,255,0.35);margin-bottom:4px;}
+.alerta-gps-link{font-size:12px;color:#dc2626;cursor:pointer;display:flex;align-items:center;gap:4px;margin-bottom:10px;}
+.alerta-actions{display:flex;gap:8px;}
+.act-btn{flex:1;padding:9px;border-radius:10px;font-size:12px;font-weight:600;cursor:pointer;border:none;}
+.act-resuelta{background:rgba(34,197,94,0.15);color:#86efac;border:1px solid rgba(34,197,94,0.25);}
+.act-resuelta:hover{background:rgba(34,197,94,0.25);}
+.act-falsa{background:rgba(234,179,8,0.1);color:#fde68a;border:1px solid rgba(234,179,8,0.2);}
+.act-falsa:hover{background:rgba(234,179,8,0.2);}
+.act-eliminar{background:rgba(220,38,38,0.1);color:#fca5a5;border:1px solid rgba(220,38,38,0.2);}
+
+/* ── CHAT ── */
+.chat-tab{flex:1;display:flex;flex-direction:column;}
+.chat-header{padding:16px 16px 10px;border-bottom:1px solid rgba(255,255,255,0.07);}
+.chat-h1{color:#fff;font-size:18px;font-weight:700;}
+.chat-messages{flex:1;overflow-y:auto;padding:12px 16px;display:flex;flex-direction:column;gap:10px;}
+.msg{max-width:82%;display:flex;flex-direction:column;gap:3px;}
+.msg.mine{align-self:flex-end;align-items:flex-end;}
+.msg.other{align-self:flex-start;align-items:flex-start;}
+.msg-author{font-size:11px;color:rgba(255,255,255,0.35);}
+.msg-bubble{padding:9px 13px;border-radius:14px;font-size:13px;line-height:1.5;}
+.msg.mine .msg-bubble{background:#dc2626;color:#fff;border-bottom-right-radius:4px;}
+.msg.other .msg-bubble{background:#1e1e2e;color:#fff;border-bottom-left-radius:4px;border:1px solid rgba(255,255,255,0.08);}
+.msg-time{font-size:10px;color:rgba(255,255,255,0.25);}
+.chat-input-row{padding:10px 16px 14px;display:flex;gap:8px;border-top:1px solid rgba(255,255,255,0.07);}
+.chat-field{flex:1;padding:10px 14px;border:1px solid rgba(255,255,255,0.12);border-radius:22px;font-size:13px;outline:none;font-family:inherit;color:#fff;background:#1e1e2e;}
+.chat-field::placeholder{color:rgba(255,255,255,0.25);}
+.chat-send-btn{width:38px;height:38px;border-radius:50%;background:#dc2626;border:none;color:#fff;cursor:pointer;font-size:15px;flex-shrink:0;}
+
+/* ── VECINOS ── */
+.vecinos-tab{flex:1;display:flex;flex-direction:column;}
+.vecinos-header{padding:16px 16px 10px;display:flex;align-items:flex-start;justify-content:space-between;}
+.vecinos-h1{color:#fff;font-size:22px;font-weight:700;}
+.vecinos-sub{color:rgba(255,255,255,0.4);font-size:13px;margin-top:2px;}
+.agregar-btn{background:#dc2626;border:none;color:#fff;font-size:13px;font-weight:600;padding:8px 14px;border-radius:10px;cursor:pointer;display:flex;align-items:center;gap:5px;white-space:nowrap;}
+.filter-tabs{display:flex;gap:8px;padding:0 16px 12px;}
+.vecinos-list{flex:1;overflow-y:auto;padding:0 16px 16px;display:flex;flex-direction:column;gap:10px;}
+.vecino-card{background:#1e1e2e;border-radius:14px;padding:13px 14px;border:1px solid rgba(255,255,255,0.07);display:flex;align-items:center;gap:12px;}
+.vecino-avatar{width:44px;height:44px;border-radius:12px;background:#dc2626;display:flex;align-items:center;justify-content:center;color:#fff;font-size:15px;font-weight:700;flex-shrink:0;}
+.vecino-info{flex:1;min-width:0;}
+.vecino-name{font-size:14px;font-weight:700;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.vecino-phone{font-size:12px;color:rgba(255,255,255,0.4);margin-top:2px;}
+.vecino-rol{font-size:10px;color:rgba(255,255,255,0.35);margin-top:2px;}
+.rol-tag{display:inline-block;font-size:10px;padding:2px 7px;border-radius:6px;font-weight:600;margin-top:3px;}
+.rol-admin{background:rgba(234,179,8,0.15);color:#fde68a;}
+.rol-vecino{background:rgba(59,130,246,0.15);color:#93c5fd;}
+.vecino-actions{display:flex;gap:6px;align-items:center;}
+.va-btn{width:32px;height:32px;border-radius:8px;border:1px solid rgba(255,255,255,0.1);background:none;display:flex;align-items:center;justify-content:center;font-size:15px;cursor:pointer;color:rgba(255,255,255,0.5);}
+.va-btn:hover{background:rgba(255,255,255,0.08);}
+.va-call{color:#22c55e;border-color:rgba(34,197,94,0.25);}
+.va-mail{color:#60a5fa;border-color:rgba(96,165,250,0.25);}
+.va-del{color:#f87171;border-color:rgba(248,113,113,0.25);}
+.star{color:#f59e0b;}
+
+/* MODAL */
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.7);display:none;align-items:flex-end;justify-content:center;z-index:200;}
+.modal-overlay.open{display:flex;}
+.modal-box{background:#1e1e2e;border-radius:20px 20px 0 0;padding:20px;width:100%;max-width:420px;border-top:1px solid rgba(255,255,255,0.1);}
+.modal-title{font-size:16px;font-weight:700;color:#fff;margin-bottom:16px;}
+.f-label{font-size:12px;color:rgba(255,255,255,0.4);margin-bottom:4px;display:block;}
+.modal-input{width:100%;padding:10px 13px;border:1px solid rgba(255,255,255,0.12);border-radius:9px;font-size:13px;margin-bottom:12px;outline:none;font-family:inherit;background:#0f0f1a;color:#fff;}
+.modal-input::placeholder{color:rgba(255,255,255,0.2);}
+.modal-select{width:100%;padding:10px 13px;border:1px solid rgba(255,255,255,0.12);border-radius:9px;font-size:13px;margin-bottom:12px;outline:none;font-family:inherit;background:#0f0f1a;color:#fff;}
+.modal-textarea{width:100%;height:70px;resize:none;border:1px solid rgba(255,255,255,0.12);border-radius:9px;padding:10px 13px;font-size:13px;margin-bottom:12px;font-family:inherit;outline:none;background:#0f0f1a;color:#fff;}
+.modal-actions{display:flex;gap:10px;}
+.modal-cancel{flex:1;padding:11px;border:1px solid rgba(255,255,255,0.12);border-radius:10px;background:none;color:rgba(255,255,255,0.5);cursor:pointer;font-size:14px;}
+.modal-submit{flex:2;padding:11px;background:#dc2626;color:#fff;border:none;border-radius:10px;cursor:pointer;font-size:14px;font-weight:700;}
+
+/* SOS ACTIVO */
+.sos-activo{display:none;flex-direction:column;align-items:center;gap:10px;}
+.sos-activo-ring{width:160px;height:160px;border-radius:50%;background:rgba(220,38,38,0.1);border:3px solid #dc2626;display:flex;align-items:center;justify-content:center;animation:pulse-ring 1s infinite;}
+.sos-counter{font-size:36px;font-weight:700;color:#dc2626;}
+.sos-sent-label{color:#fca5a5;font-size:13px;font-weight:600;}
+.cancel-sos-btn{background:none;border:1px solid rgba(255,255,255,0.15);color:rgba(255,255,255,0.4);padding:8px 20px;border-radius:10px;cursor:pointer;font-size:13px;margin-top:4px;}
+</style>
+</head>
+<body>
+<div class="app">
+
+<!-- ══════════ PORTADA ══════════ -->
+<div class="page active" id="pg-cover">
+  <div class="cover">
+    <div class="cover-logo">🛡️</div>
+    <div style="text-align:center;">
+      <div class="cover-title">BarrioSeguro</div>
+      <div class="cover-sub">Red de seguridad vecinal</div>
+    </div>
+    <div class="cover-btns">
+      <button class="btn-red" onclick="go('pg-join')">🔑 &nbsp;Unirse a una villa</button>
+      <button class="btn-dark" onclick="go('pg-admin-gate')">🏗 &nbsp;Crear una villa</button>
+    </div>
+    <div class="cover-footer">Ingresa con el código que te entregó tu administrador</div>
+  </div>
+</div>
+
+<!-- ══════════ ACCESO ADMIN ══════════ -->
+<div class="page" id="pg-admin-gate">
+  <div class="inner">
+    <div class="inner-header">
+      <button class="back-btn" onclick="go('pg-cover')">←</button>
+      <div class="inner-title">Acceso administrador</div>
+    </div>
+    <div class="inner-body">
+      <div class="admin-gate-box">🔒 Solo administradores autorizados pueden crear villas</div>
+      <div class="field-group">
+        <label class="field-label">Contraseña de administrador</label>
+        <input class="field-input" type="password" id="admin-pass" placeholder="Ingresa la contraseña" />
+      </div>
+      <div class="error-msg" id="admin-err">Contraseña incorrecta.</div>
+      <button class="submit-btn" onclick="checkAdmin()">Ingresar</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════ CREAR VILLA ══════════ -->
+<div class="page" id="pg-create">
+  <div class="inner">
+    <div class="inner-header">
+      <button class="back-btn" onclick="go('pg-cover')">←</button>
+      <div class="inner-title">Crear nueva villa</div>
+    </div>
+    <div class="inner-body">
+      <div class="field-group">
+        <label class="field-label">Nombre de la villa / población</label>
+        <input class="field-input" type="text" id="v-nombre" placeholder="Ej: Villa Las Araucarias" />
+      </div>
+      <div class="field-group">
+        <label class="field-label">Ciudad</label>
+        <input class="field-input" type="text" id="v-ciudad" placeholder="Ej: Angol" />
+      </div>
+      <div class="field-group">
+        <label class="field-label">Contraseña para vecinos</label>
+        <input class="field-input" type="password" id="v-villa-pass" placeholder="Crea una contraseña" />
+        <span class="field-hint">Los vecinos usarán esta contraseña para unirse</span>
+      </div>
+      <div class="field-group">
+        <label class="field-label">Repetir contraseña</label>
+        <input class="field-input" type="password" id="v-villa-pass2" placeholder="Repite la contraseña" />
+      </div>
+      <div class="error-msg" id="create-err"></div>
+      <div class="success-box" id="create-ok">
+        <div class="success-title">✅ ¡Villa creada exitosamente!</div>
+        <div style="font-size:12px;color:#86efac;margin-bottom:4px;">Entrega este código y contraseña a tus vecinos:</div>
+        <div class="code-row"><span class="code-label">Código de villa</span><span class="code-value" id="gen-code">—</span></div>
+        <div class="code-row"><span class="code-label">Contraseña vecinos</span><span class="code-value" id="gen-pass">—</span></div>
+        <button class="submit-btn" onclick="go('pg-app');cargarApp()" style="margin-top:4px;">Entrar a la app →</button>
+      </div>
+      <button class="submit-btn" id="create-btn" onclick="crearVilla()">Crear villa</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════ UNIRSE ══════════ -->
+<div class="page" id="pg-join">
+  <div class="inner">
+    <div class="inner-header">
+      <button class="back-btn" onclick="go('pg-cover')">←</button>
+      <div class="inner-title">Unirse a una villa</div>
+    </div>
+    <div class="inner-body">
+      <div class="sec-title">Acceso a la villa</div>
+      <div class="field-group">
+        <label class="field-label">Código de la villa</label>
+        <input class="field-input" type="text" id="j-code" placeholder="Ej: VILLA-X4K2" />
+        <span class="field-hint">Tu administrador te entregó este código</span>
+      </div>
+      <div class="field-group">
+        <label class="field-label">Contraseña de la villa</label>
+        <input class="field-input" type="password" id="j-villa-pass" placeholder="Contraseña del admin" />
+      </div>
+      <div class="error-msg" id="join-err"></div>
+      <div class="success-box" id="join-ok">
+        <div class="success-title">✅ ¡Te uniste a la villa!</div>
+        <div style="font-size:13px;color:#86efac;" id="join-welcome"></div>
+        <div style="font-size:12px;color:#86efac;">Entrando a la app...</div>
+      </div>
+      <button class="submit-btn" onclick="unirseVilla()">Unirse a la villa</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════ APP PRINCIPAL ══════════ -->
+<div class="page" id="pg-app">
+  <div class="main-app">
+    <div class="app-header">
+      <div class="app-header-left">
+        <div class="villa-name" id="app-villa-name">BarrioSeguro</div>
+        <div class="villa-sub"><span class="status-dot"></span><span id="vecinos-count">0</span> vecinos activos</div>
+      </div>
+      <button class="logout-btn" onclick="cerrarSesion()">Salir</button>
+    </div>
+
+    <!-- TAB PÁNICO -->
+    <div class="tab-content active" id="tab-panico">
+      <div class="panico-tab">
+        <div class="panico-title">¿Qué emergencia necesitas?</div>
+        <div class="panico-sub">Selecciona el tipo antes de enviar la alerta</div>
+        <div class="emergency-types">
+          <div class="etype-btn" onclick="selectEmergency(this,'🔪','Robo')" data-tipo="Robo">
+            <span class="etype-icon">🔪</span>
+            <span class="etype-label">Robo</span>
+          </div>
+          <div class="etype-btn" onclick="selectEmergency(this,'👤','Sujeto sospechoso')" data-tipo="Sujeto sospechoso">
+            <span class="etype-icon">👤</span>
+            <span class="etype-label">Sujeto sospechoso</span>
+          </div>
+          <div class="etype-btn" onclick="selectEmergency(this,'🔥','Incendio')" data-tipo="Incendio">
+            <span class="etype-icon">🔥</span>
+            <span class="etype-label">Incendio</span>
+          </div>
+          <div class="etype-btn" onclick="selectEmergency(this,'🆘','Emergencia')" data-tipo="Emergencia">
+            <span class="etype-icon">🆘</span>
+            <span class="etype-label">Emergencia</span>
+          </div>
+        </div>
+        <div class="sos-selected-label" id="sos-selected-text">Selecciona un tipo de emergencia arriba</div>
+        <div id="sos-normal-state">
+          <div class="sos-ring-outer">
+            <button class="sos-main-btn" onclick="activarPanico()">
+              <span style="font-size:30px;">🛡️</span>
+              PÁNICO
+            </button>
+          </div>
+        </div>
+        <div class="sos-activo" id="sos-activo-state">
+          <div class="sos-activo-ring">
+            <div style="text-align:center;">
+              <div class="sos-counter" id="sos-countdown">3</div>
+              <div style="font-size:12px;color:#fca5a5;">Alertando...</div>
+            </div>
+          </div>
+          <div class="sos-sent-label">⚠️ Alerta enviada a todos los vecinos</div>
+          <button class="cancel-sos-btn" onclick="cancelarSOS()">Cancelar alerta</button>
+        </div>
+        <div class="emergency-contacts">
+          <div class="ec-card"><div class="ec-icon">👮</div><div class="ec-name">Carabineros</div><div class="ec-num">133</div></div>
+          <div class="ec-card"><div class="ec-icon">🚒</div><div class="ec-name">Bomberos</div><div class="ec-num">132</div></div>
+          <div class="ec-card"><div class="ec-icon">🚑</div><div class="ec-name">Ambulancia</div><div class="ec-num">131</div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB ALERTAS -->
+    <div class="tab-content" id="tab-alertas">
+      <div class="alertas-tab">
+        <div class="alertas-header">
+          <div class="alertas-h1">Alertas</div>
+          <div class="alertas-sub">Historial de alertas de tu zona</div>
+        </div>
+        <div class="filter-row">
+          <button class="filter-btn active" onclick="filtrarAlertas('todas',this)">Todas</button>
+          <button class="filter-btn" onclick="filtrarAlertas('activa',this)">Activas</button>
+          <button class="filter-btn" onclick="filtrarAlertas('resuelta',this)">Resueltas</button>
+        </div>
+        <div class="alertas-list" id="alertas-list">
+          <div style="text-align:center;color:rgba(255,255,255,0.3);padding:30px;font-size:13px;"><span class="spinner"></span>Cargando alertas...</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB CHAT -->
+    <div class="tab-content" id="tab-chat">
+      <div class="chat-tab">
+        <div class="chat-header">
+          <div class="chat-h1">Chat vecinal</div>
+        </div>
+        <div class="chat-messages" id="chat-msgs"></div>
+        <div class="chat-input-row">
+          <input class="chat-field" id="chat-input" placeholder="Escribe un mensaje..." onkeydown="if(event.key==='Enter')enviarMensaje()" />
+          <button class="chat-send-btn" onclick="enviarMensaje()">➤</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB VECINOS -->
+    <div class="tab-content" id="tab-vecinos">
+      <div class="vecinos-tab">
+        <div class="vecinos-header">
+          <div>
+            <div class="vecinos-h1">Vecinos</div>
+            <div class="vecinos-sub">Tu red de seguridad</div>
+          </div>
+          <button class="agregar-btn" onclick="openModal('modal-agregar')">👤+ Agregar</button>
+        </div>
+
+        <div class="vecinos-list" id="vecinos-list">
+          <div style="text-align:center;color:rgba(255,255,255,0.3);padding:30px;font-size:13px;"><span class="spinner"></span>Cargando vecinos...</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- BOTTOM NAV -->
+    <nav class="bottom-nav">
+      <button class="bnav-btn active" onclick="showTab('tab-panico',this)"><span class="bnav-icon panico-icon">🛡️</span>PÁNICO</button>
+      <button class="bnav-btn" onclick="showTab('tab-alertas',this)"><span class="bnav-icon">🔔</span>ALERTAS</button>
+      <button class="bnav-btn" onclick="showTab('tab-chat',this)"><span class="bnav-icon">💬</span>CHAT</button>
+      <button class="bnav-btn" onclick="showTab('tab-vecinos',this)"><span class="bnav-icon">👥</span>VECINOS</button>
+    </nav>
+  </div>
+</div>
+
+<!-- ALERTA POPUP -->
+<div class="alerta-popup" id="alerta-popup">
+  <div class="alerta-popup-box">
+    <div class="alerta-popup-icon" id="popup-icon">🚨</div>
+    <div class="alerta-popup-tipo" id="popup-tipo">ALERTA</div>
+    <div class="alerta-popup-vecino" id="popup-vecino"></div>
+    <div class="alerta-popup-desc" id="popup-desc"></div>
+    <button class="alerta-popup-cerrar" onclick="cerrarPopupAlerta()">Entendido</button>
+  </div>
+</div>
+
+<!-- MODAL AGREGAR VECINO -->
+<div class="modal-overlay" id="modal-agregar" onclick="if(event.target===this)closeModal('modal-agregar')">
+  <div class="modal-box">
+    <div class="modal-title">Agregar vecino</div>
+    <label class="f-label">Nombre completo</label>
+    <input class="modal-input" type="text" id="nv-nombre" placeholder="Ej: María González" />
+    <label class="f-label">Teléfono</label>
+    <input class="modal-input" type="text" id="nv-tel" placeholder="+56 9 1234 5678" />
+    <label class="f-label">Correo electrónico</label>
+    <input class="modal-input" type="email" id="nv-email" placeholder="vecino@correo.com" />
+    <label class="f-label">Dirección</label>
+    <input class="modal-input" type="text" id="nv-dir" placeholder="Ej: Los Pinos 220" />
+    <div class="modal-actions">
+      <button class="modal-cancel" onclick="closeModal('modal-agregar')">Cancelar</button>
+      <button class="modal-submit" onclick="agregarVecino()">Agregar</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL REPORTE INCIDENTE -->
+<div class="modal-overlay" id="modal-reporte" onclick="if(event.target===this)closeModal('modal-reporte')">
+  <div class="modal-box">
+    <div class="modal-title">Reportar incidente</div>
+    <label class="f-label">Tipo de incidente</label>
+    <select class="modal-select" id="inc-tipo">
+      <option>🔪 Robo / intento de robo</option>
+      <option>👤 Sujeto sospechoso</option>
+      <option>🔥 Incendio</option>
+      <option>🚗 Vehículo abandonado</option>
+      <option>💥 Vandalismo</option>
+      <option>🆘 Emergencia médica</option>
+      <option>📢 Otro</option>
+    </select>
+    <label class="f-label">Dirección</label>
+    <input class="modal-input" type="text" id="inc-dir" placeholder="Ej: Los Pinos 220" />
+    <label class="f-label">Descripción</label>
+    <textarea class="modal-textarea" id="inc-desc" placeholder="Describe lo que viste..."></textarea>
+    <div class="modal-actions">
+      <button class="modal-cancel" onclick="closeModal('modal-reporte')">Cancelar</button>
+      <button class="modal-submit" onclick="enviarReporte()">Enviar alerta</button>
+    </div>
+  </div>
+</div>
+
+<script>
+var _sosTimer = null;
+var _selectedEmergency = null;
+var _todosVecinos = [];
+var _todasAlertas = [];
+var _filtroAlerta = 'todas';
+var _filtroVecino = 'todos';
+
+function go(id) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+  document.querySelectorAll('.error-msg').forEach(e => e.style.display = 'none');
+  document.querySelectorAll('.success-box').forEach(s => s.style.display = 'none');
+}
+
+function showTab(id, btn) {
+  document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.bnav-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+  btn.classList.add('active');
+}
+
+function openModal(id) { document.getElementById(id).classList.add('open'); }
+function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+
+function checkAdmin() {
+  var p = document.getElementById('admin-pass').value;
+  if (p === 'angol2026') { document.getElementById('admin-pass').value = ''; go('pg-create'); }
+  else { var e=document.getElementById('admin-err'); e.textContent='Contraseña incorrecta.'; e.style.display='block'; }
+}
+
+function genCode() {
+  var chars='ABCDEFGHJKLMNPQRSTUVWXYZ23456789', c='VILLA-';
+  for(var i=0;i<4;i++) c+=chars[Math.floor(Math.random()*chars.length)];
+  return c;
+}
+
+async function crearVilla() {
+  var nombre=document.getElementById('v-nombre').value.trim();
+  var ciudad=document.getElementById('v-ciudad').value.trim();
+  var villaPass=document.getElementById('v-villa-pass').value.trim();
+  var villaPass2=document.getElementById('v-villa-pass2').value.trim();
+  var errEl=document.getElementById('create-err');
+  if(!nombre||!ciudad||!villaPass||!villaPass2){errEl.textContent='Completa todos los campos.';errEl.style.display='block';return;}
+  if(villaPass!==villaPass2){errEl.textContent='Las contraseñas no coinciden.';errEl.style.display='block';return;}
+  var btn=document.getElementById('create-btn');
+  btn.disabled=true; btn.textContent='Creando...';
+  errEl.style.display='none';
+  var timeout = setTimeout(function(){
+    if(btn.disabled){
+      errEl.textContent='Tiempo agotado. Verifica tu conexión a internet y las reglas de Firestore.';
+      errEl.style.display='block';
+      btn.disabled=false;
+      btn.textContent='Crear villa';
+    }
+  }, 8000);
+  try {
+    var fb=window._firebase, db=window._db;
+    var villaId=genCode();
+    await fb.setDoc(fb.doc(db,'villas',villaId),{nombre,ciudad,password:villaPass,creadaEl:fb.serverTimestamp()});
+    var user={uid:'admin_'+villaId,nombre:'Administrador',villaId,rol:'admin'};
+    window._currentUser=user;
+    window._currentVillaId=villaId;
+    clearTimeout(timeout);
+    localStorage.setItem('bs_user', JSON.stringify(user));
+    document.getElementById('gen-code').textContent=villaId;
+    document.getElementById('gen-pass').textContent=villaPass;
+    document.getElementById('create-ok').style.display='flex';
+    btn.style.display='none';
+    // No entrar automático aquí — el admin necesita ver y copiar el código primero
+  } catch(e){
+    var msg = e.message || e.code || JSON.stringify(e);
+    errEl.textContent='Error: '+msg;
+    errEl.style.display='block';
+    btn.disabled=false;
+    btn.textContent='Crear villa';
+    console.error('Firebase error:', e);
+  }
+}
+
+async function unirseVilla() {
+  var code=document.getElementById('j-code').value.trim().toUpperCase();
+  var villaPass=document.getElementById('j-villa-pass').value.trim();
+  var errEl=document.getElementById('join-err');
+  if(!code||!villaPass){errEl.textContent='Ingresa el código y la contraseña.';errEl.style.display='block';return;}
+  var btn=document.querySelector('#pg-join .submit-btn:last-of-type');
+  btn.disabled=true; btn.textContent='Verificando...';
+  errEl.style.display='none';
+  try {
+    var projectId='barrio-seguro-app-93edd';
+    var url='https://firestore.googleapis.com/v1/projects/'+projectId+'/databases/(default)/documents/villas/'+code+'?key=AIzaSyDbPcOeUQtRa0RBNwMlPsOXVHIEKMiajYU';
+    var resp=await fetch(url);
+    if(!resp.ok){
+      errEl.textContent='Villa no encontrada. Verifica el código.';
+      errEl.style.display='block';
+      btn.disabled=false; btn.textContent='Unirse a la villa';
+      return;
+    }
+    var data=await resp.json();
+    var fields=data.fields||{};
+    var storedPass=fields.password&&fields.password.stringValue;
+    var villaNombre=fields.nombre&&fields.nombre.stringValue||code;
+    if(storedPass!==villaPass){
+      errEl.textContent='Contraseña incorrecta.';
+      errEl.style.display='block';
+      btn.disabled=false; btn.textContent='Unirse a la villa';
+      return;
+    }
+    var uid='vecino_'+Date.now();
+    var user={uid, nombre:'Vecino', villaId:code, villaNombre:villaNombre, rol:'vecino'};
+    window._currentUser=user;
+    window._currentVillaId=code;
+    localStorage.setItem('bs_user', JSON.stringify(user));
+    document.getElementById('join-welcome').textContent='¡Bienvenido a '+villaNombre+'!';
+    document.getElementById('join-ok').style.display='flex';
+    btn.style.display='none';
+    setTimeout(function(){ go('pg-app'); cargarApp(); }, 1200);
+  } catch(e){
+    errEl.textContent='Error: '+e.message;
+    errEl.style.display='block';
+    btn.disabled=false;
+    btn.textContent='Unirse a la villa';
+  }
+}
+
+async function cargarApp() {
+  var fb=window._firebase, db=window._db, villaId=window._currentVillaId;
+  if(!villaId) return;
+  try {
+    var vSnap=await fb.getDoc(fb.doc(db,'villas',villaId));
+    if(vSnap.exists()) document.getElementById('app-villa-name').textContent=vSnap.data().nombre;
+  } catch(e) {
+    if(window._currentUser && window._currentUser.villaNombre)
+      document.getElementById('app-villa-name').textContent=window._currentUser.villaNombre;
+  }
+
+  var qAlertas=fb.query(fb.collection(db,'villas',villaId,'incidentes'),fb.orderBy('creadoEl','desc'));
+  var _primerasCarga = true;
+  var _ultimaAlertaId = null;
+  fb.onSnapshot(qAlertas,(snap)=>{
+    _todasAlertas=snap.docs.map(d=>({id:d.id,...d.data()}));
+    renderAlertas();
+    if(!_primerasCarga && !snap.empty){
+      var ultima=snap.docs[0];
+      if(ultima.id !== _ultimaAlertaId){
+        _ultimaAlertaId=ultima.id;
+        var a=ultima.data();
+        if((a.estado||'activa')==='activa'){
+          mostrarPopupAlerta(a);
+        }
+      }
+    }
+    if(_primerasCarga){
+      _primerasCarga=false;
+      if(!snap.empty) _ultimaAlertaId=snap.docs[0].id;
+    }
+  });
+
+  var qChat=fb.query(fb.collection(db,'villas',villaId,'mensajes'),fb.orderBy('creadoEl','asc'));
+  fb.onSnapshot(qChat,(snap)=>{
+    var cont=document.getElementById('chat-msgs'); cont.innerHTML='';
+    snap.docs.forEach(d=>{
+      var m=d.data(), esPropio=window._currentUser&&m.autorId===window._currentUser.uid;
+      var div=document.createElement('div'); div.className='msg '+(esPropio?'mine':'other');
+      var hora=m.creadoEl?new Date(m.creadoEl.seconds*1000).toLocaleTimeString('es-CL',{hour:'2-digit',minute:'2-digit'}):'';
+      div.innerHTML=(!esPropio?'<div class="msg-author">'+m.autor+'</div>':'')+
+        '<div class="msg-bubble">'+m.texto+'</div>'+
+        '<div class="msg-time">'+hora+'</div>';
+      cont.appendChild(div);
+    });
+    cont.scrollTop=cont.scrollHeight;
+  });
+
+  fb.onSnapshot(fb.collection(db,'usuarios'),(snap)=>{
+    _todosVecinos=snap.docs.map(d=>({id:d.id,...d.data()})).filter(v=>v.villaId===villaId);
+    document.getElementById('vecinos-count').textContent=_todosVecinos.length;
+    renderVecinos();
+  });
+}
+
+function renderAlertas() {
+  var cont=document.getElementById('alertas-list'); cont.innerHTML='';
+  var lista=_todasAlertas.filter(a=>{
+    if(_filtroAlerta==='todas') return true;
+    return (a.estado||'activa')===_filtroAlerta;
+  });
+  if(!lista.length){cont.innerHTML='<div style="text-align:center;color:rgba(255,255,255,0.25);padding:30px;font-size:13px;">No hay alertas</div>';return;}
+  lista.forEach(a=>{
+    var estado=a.estado||'activa';
+    var hora=a.creadoEl?timeAgo(a.creadoEl.seconds*1000):'';
+    var emojiMap={'Robo':'🔪','Sujeto sospechoso':'👤','Incendio':'🔥','Emergencia':'🆘'};
+    var emoji=emojiMap[a.tipoEmergencia||a.tipo]||'⚠️';
+    var badgeClass=estado==='activa'?'badge-activa':estado==='resuelta'?'badge-resuelta':'badge-falsa';
+    var badgeText=estado==='activa'?'Activa':estado==='resuelta'?'Resuelta':'Falsa alarma';
+    var lat=a.lat?a.lat.toFixed(6):'?', lng=a.lng?a.lng.toFixed(6):'?';
+    var mapsUrl='https://www.google.com/maps?q='+lat+','+lng;
+    var card=document.createElement('div'); card.className='alerta-card';
+    card.innerHTML=
+      '<div class="alerta-card-top">'+
+        '<div class="alerta-avatar">'+emoji+'</div>'+
+        '<div><div class="alerta-user">'+(a.autorNombre||'Vecino')+'</div>'+
+        '<div class="alerta-meta">'+hora+'</div></div>'+
+        '<span class="alerta-type-badge '+badgeClass+'">'+badgeText+'</span>'+
+      '</div>'+
+      '<div class="alerta-desc">'+emoji+' ALERTA: '+(a.tipoEmergencia||a.tipo||'Emergencia').toUpperCase()+' — '+(a.descripcion||a.autorNombre+' necesita ayuda urgente.')+'</div>'+
+      (a.lat?'<div class="alerta-gps">📍 Lat: '+lat+', Lng: '+lng+'</div>'+
+        '<div class="alerta-gps-link" onclick="window.open(\''+mapsUrl+'\')">📍 Ver ubicación en mapa</div>':'<div class="alerta-gps">📍 Ubicación: '+(a.direccion||'No disponible')+'</div>')+
+      (estado==='activa'?
+        '<div class="alerta-actions">'+
+          '<button class="act-btn act-resuelta" onclick="cambiarEstado(\''+a.id+'\',\'resuelta\')">Marcar resuelta</button>'+
+          '<button class="act-btn act-falsa" onclick="cambiarEstado(\''+a.id+'\',\'falsa alarma\')">Falsa alarma</button>'+
+        '</div>':'');
+    cont.appendChild(card);
+  });
+}
+
+function renderVecinos() {
+  var cont=document.getElementById('vecinos-list'); cont.innerHTML='';
+  var lista=_filtroVecino==='admin'?_todosVecinos.filter(v=>v.rol==='admin'):_todosVecinos;
+  if(!lista.length){cont.innerHTML='<div style="text-align:center;color:rgba(255,255,255,0.25);padding:30px;font-size:13px;">No hay vecinos</div>';return;}
+  lista.forEach(v=>{
+    var initials=(v.nombre||'V').split(' ').map(n=>n[0]).join('').substring(0,2).toUpperCase();
+    var card=document.createElement('div'); card.className='vecino-card';
+    card.innerHTML=
+      '<div class="vecino-avatar">'+initials+'</div>'+
+      '<div class="vecino-info">'+
+        '<div class="vecino-name">'+(v.nombre||'Vecino')+'</div>'+
+        '<div class="vecino-phone">📞 '+(v.telefono||'Sin teléfono')+'</div>'+
+        '<span class="rol-tag '+(v.rol==='admin'?'rol-admin':'rol-vecino')+'">'+
+          (v.rol==='admin'?'⭐ Administrador':'Vecino')+
+        '</span>'+
+      '</div>'+
+      '<div class="vecino-actions">'+
+        (v.telefono?'<button class="va-btn va-call" onclick="window.open(\'tel:'+v.telefono+'\')">📞</button>':'') +
+        (v.email?'<button class="va-btn va-mail" onclick="window.open(\'mailto:'+v.email+'\')">✉️</button>':'') +
+      '</div>';
+    cont.appendChild(card);
+  });
+}
+
+function filtrarAlertas(f, btn) {
+  _filtroAlerta=f;
+  document.querySelectorAll('.alertas-tab .filter-btn').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  renderAlertas();
+}
+
+function filtrarVecinos(f, btn) {
+  _filtroVecino=f;
+  document.querySelectorAll('.vecinos-tab .filter-btn').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  renderVecinos();
+}
+
+async function cambiarEstado(id, estado) {
+  var fb=window._firebase, db=window._db, villaId=window._currentVillaId;
+  await fb.updateDoc(fb.doc(db,'villas',villaId,'incidentes',id),{estado});
+}
+
+async function eliminarVecino(id) {
+  if(!confirm('¿Eliminar este vecino?')) return;
+  var fb=window._firebase, db=window._db;
+  await fb.deleteDoc(fb.doc(db,'usuarios',id));
+}
+
+async function agregarVecino() {
+  var fb=window._firebase, db=window._db, villaId=window._currentVillaId;
+  var nombre=document.getElementById('nv-nombre').value.trim();
+  var tel=document.getElementById('nv-tel').value.trim();
+  var email=document.getElementById('nv-email').value.trim();
+  var dir=document.getElementById('nv-dir').value.trim();
+  if(!nombre||!tel){alert('Nombre y teléfono son obligatorios');return;}
+  await fb.addDoc(fb.collection(db,'usuarios'),{nombre,telefono:tel,email,direccion:dir,rol:'vecino',villaId,creadoEl:fb.serverTimestamp()});
+  closeModal('modal-agregar');
+  document.getElementById('nv-nombre').value='';
+  document.getElementById('nv-tel').value='';
+  document.getElementById('nv-email').value='';
+  document.getElementById('nv-dir').value='';
+}
+
+function selectEmergency(el, emoji, tipo) {
+  document.querySelectorAll('.etype-btn').forEach(b=>b.classList.remove('selected'));
+  el.classList.add('selected');
+  _selectedEmergency={emoji,tipo};
+  document.getElementById('sos-selected-text').textContent='Seleccionado: '+emoji+' '+tipo;
+}
+
+function activarPanico() {
+  if(!_selectedEmergency){alert('Selecciona el tipo de emergencia primero');return;}
+  document.getElementById('sos-normal-state').style.display='none';
+  document.getElementById('sos-activo-state').style.display='flex';
+  var count=3;
+  document.getElementById('sos-countdown').textContent=count;
+  _sosTimer=setInterval(async function(){
+    count--;
+    if(count<=0){
+      clearInterval(_sosTimer);
+      document.getElementById('sos-countdown').textContent='!';
+      var fb=window._firebase, db=window._db, villaId=window._currentVillaId;
+      var pos=await getGPS();
+      await fb.addDoc(fb.collection(db,'villas',villaId,'incidentes'),{
+        tipo:'🚨 PÁNICO',
+        tipoEmergencia:_selectedEmergency.tipo,
+        fcmToken:window._fcmToken||null,
+        descripcion:window._currentUser.nombre+' necesita ayuda urgente.',
+        estado:'activa',
+        lat:pos.lat, lng:pos.lng,
+        autorId:window._currentUser.uid,
+        autorNombre:window._currentUser.nombre,
+        creadoEl:fb.serverTimestamp()
+      });
+    } else { document.getElementById('sos-countdown').textContent=count; }
+  },1000);
+}
+
+function cancelarSOS(){
+  clearInterval(_sosTimer);
+  document.getElementById('sos-normal-state').style.display='block';
+  document.getElementById('sos-activo-state').style.display='none';
+}
+
+function getGPS(){
+  return new Promise(resolve=>{
+    if(!navigator.geolocation){resolve({lat:0,lng:0});return;}
+    navigator.geolocation.getCurrentPosition(
+      p=>resolve({lat:p.coords.latitude,lng:p.coords.longitude}),
+      ()=>resolve({lat:0,lng:0}),
+      {timeout:5000}
+    );
+  });
+}
+
+async function enviarReporte(){
+  var fb=window._firebase, db=window._db, villaId=window._currentVillaId;
+  var tipo=document.getElementById('inc-tipo').value;
+  var dir=document.getElementById('inc-dir').value;
+  var desc=document.getElementById('inc-desc').value;
+  var pos=await getGPS();
+  await fb.addDoc(fb.collection(db,'villas',villaId,'incidentes'),{
+    tipo, direccion:dir, descripcion:desc, estado:'activa',
+    lat:pos.lat, lng:pos.lng,
+    autorId:window._currentUser.uid,
+    autorNombre:window._currentUser.nombre,
+    creadoEl:fb.serverTimestamp()
+  });
+  closeModal('modal-reporte');
+  document.getElementById('inc-dir').value='';
+  document.getElementById('inc-desc').value='';
+  showTab('tab-alertas',document.querySelectorAll('.bnav-btn')[1]);
+}
+
+async function enviarMensaje(){
+  var fb=window._firebase, db=window._db, villaId=window._currentVillaId;
+  var input=document.getElementById('chat-input');
+  var texto=input.value.trim();
+  if(!texto) return;
+  await fb.addDoc(fb.collection(db,'villas',villaId,'mensajes'),{
+    texto, autorId:window._currentUser.uid, autor:window._currentUser.nombre, creadoEl:fb.serverTimestamp()
+  });
+  input.value='';
+}
+
+function cerrarSesion(){
+  localStorage.removeItem('bs_user');
+  window._currentUser=null; window._currentVillaId=null;
+  go('pg-cover');
+}
+
+function mostrarPopupAlerta(a){
+  var emojiMap={'Robo':'🔪','Sujeto sospechoso':'👤','Incendio':'🔥','Emergencia':'🆘','🚨 PÁNICO':'🚨'};
+  var tipo=a.tipoEmergencia||a.tipo||'Emergencia';
+  var emoji=emojiMap[tipo]||'🚨';
+  document.getElementById('popup-icon').textContent=emoji;
+  document.getElementById('popup-tipo').textContent='⚠️ '+tipo.toUpperCase();
+  document.getElementById('popup-vecino').textContent='Reportado por: '+(a.autorNombre||'Vecino');
+  document.getElementById('popup-desc').textContent=a.descripcion||'Se necesita ayuda urgente';
+  document.getElementById('alerta-popup').classList.add('show');
+  // Sonido de alerta
+  try {
+    var ctx=new(window.AudioContext||window.webkitAudioContext)();
+    function beep(freq,start,dur){
+      var o=ctx.createOscillator(), g=ctx.createGain();
+      o.connect(g); g.connect(ctx.destination);
+      o.frequency.value=freq; o.type='square';
+      g.gain.setValueAtTime(0.3,ctx.currentTime+start);
+      g.gain.exponentialRampToValueAtTime(0.001,ctx.currentTime+start+dur);
+      o.start(ctx.currentTime+start);
+      o.stop(ctx.currentTime+start+dur+0.05);
+    }
+    beep(880,0,0.15); beep(660,0.2,0.15); beep(880,0.4,0.15);
+    beep(660,0.6,0.15); beep(880,0.8,0.15); beep(660,1.0,0.15);
+  } catch(e){}
+}
+
+function cerrarPopupAlerta(){
+  document.getElementById('alerta-popup').classList.remove('show');
+}
+
+function timeAgo(ms){
+  var diff=Date.now()-ms, s=Math.floor(diff/1000);
+  if(s<60) return 'hace '+s+' seg';
+  if(s<3600) return 'hace '+Math.floor(s/60)+' min';
+  if(s<86400) return 'hace '+Math.floor(s/3600)+' h';
+  return 'hace '+Math.floor(s/86400)+' días';
+}
+</script>
+</body>
+</html>
